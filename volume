@@ -1,0 +1,69 @@
+#!/bin/bash
+#
+# PulseAudio volume control via pactl, plus player-specific volume via
+# playerctl (hardcoded to PLAYER below — edit for yours, find its name with
+# `playerctl -l`).
+#
+#   volume level | l        prints e.g. "42%", or "42M" if muted
+#   volume up | u             +2dB (capped, won't go above ~110%)
+#   volume down | d           -2dB
+#   volume mute | m           toggle mute
+#   volume player-up | player-down
+
+PLAYER=cantata
+
+
+# Raw `pactl list sinks` block for the current default sink, from its
+# header line down through (and including) its "Volume:" line.
+_get_sink_nfo () {
+    sink=$(pactl info | grep 'Default Sink:' | cut -d: -f2 | xargs)
+    echo "$(pactl list sinks | awk -v sink="$sink" '$0 ~ sink {flag=1} flag; /Volume:/ && flag {exit}')"
+}
+
+# Current default-sink volume as e.g. "42%", or "42M" (M suffix) when muted.
+get-volume () {
+    nfo=$(_get_sink_nfo)
+    volume=$(echo "$nfo" | grep 'Volume' | cut -d '/' -f 4 | sed 's/ //g; s/%$//')
+    muted=$(echo "$nfo" | grep -oP 'Mute: \K\w+')
+    [[ $muted == yes ]] && echo "${volume}M" || echo "${volume}%"
+}
+
+
+# get-volume with the trailing %/M suffix stripped, for numeric comparison.
+_get-volume () {
+    volume=$(get-volume)
+    echo "${volume%?}"
+}
+
+# +2dB, capped so it won't push the default sink above ~110%.
+volume-up () {
+    [ "$(_get-volume)" -lt 110 ] && pactl -- set-sink-volume @DEFAULT_SINK@ +2dB
+}
+
+
+volume-down () {
+    pactl -- set-sink-volume @DEFAULT_SINK@ -2dB
+}
+
+mute () {
+    pactl set-sink-mute @DEFAULT_SINK@ toggle
+}
+
+
+volume-up-player () {
+    playerctl -p $PLAYER volume '0.05+'
+}
+
+volume-down-player () {
+    playerctl -p $PLAYER volume '0.05-'
+}
+
+
+case $1 in
+    l | level) get-volume exit;;
+    u | up) volume-up exit;;
+    d | down) volume-down exit;;
+    m | mute) mute exit;;
+    player-up) volume-up-player exit;;
+    player-down) volume-down-player exit;;
+esac

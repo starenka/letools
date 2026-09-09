@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# playerctl wrapper defaulting to a specific player — override via $PLAYER
+# env var, or edit the default below (find a player's name with
+# `playerctl -l`).
+#
+#   player playpause | next | prev | stop
+#   player volume-up | volume-down
+#   player current   # prints "title - artist"
+
+PLAYER=${PLAYER:-dog.unix.cantata.Cantata}
+
+_stop () {
+    playerctl -p $PLAYER stop
+}
+
+_next () {
+    playerctl -p $PLAYER next
+}
+
+_prev () {
+    playerctl -p $PLAYER previous
+}
+
+_playpause () {
+    playerctl -p $PLAYER play-pause
+}
+
+_current () {
+    playerctl -p $PLAYER metadata -f '{{title}} - {{artist}'
+}
+
+_volume-up () {
+    playerctl -p $PLAYER volume '0.05+'
+}
+
+_volume-down () {
+    playerctl -p $PLAYER volume '0.05-'
+}
+
+case $1 in
+    volume-up) _volume-up; exit;;
+    volume-down) _volume-down; exit;;
+    stop) _stop; exit;;
+    next) _next; exit;;
+    prev) _prev; exit;;
+    playpause) _playpause; exit;;
+    current) _current; exit;;
+esac

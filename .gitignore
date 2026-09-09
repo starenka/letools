@@ -1,0 +1,6 @@
+.issues
+__pycache__/
+
+# weather: holds API keys + last-fetched location/GRIB data
+/weather.toml
+/.weather-cache/

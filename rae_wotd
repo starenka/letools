@@ -1,0 +1,52 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["requests"]
+# ///
+"""Fetch the RAE (Real Academia Española) "word of the day" and cache it.
+
+Caches the raw HTML at ~/.cache/rae_wotd/wotd-<YYYY-MM-DD>.html — one
+network call per day; subsequent calls that day just print the cached
+path. Prints the path to stdout either way.
+"""
+
+import json
+import re
+from datetime import date
+from pathlib import Path
+
+import requests
+
+AUTH = ("p682JghS3", "aGfUdCiE434")
+HEADERS = {
+    "User-Agent": "Dalvik/2.1.0 (Linux; U; Android 9; Xperia Z1 Compact Build/PQ3A.190605.003)",
+}
+
+
+def get_wotd() -> Path:
+    """Return the path to today's cached word-of-the-day HTML, fetching it first if needed."""
+    cache_dir = Path.home() / ".cache" / "rae_wotd"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    out = cache_dir / f"wotd-{date.today():%Y-%m-%d}.html"
+
+    if out.exists():
+        return out
+
+    with requests.Session() as session:
+        session.auth = AUTH
+        session.headers.update(HEADERS)
+
+        # JSONP-wrapped, e.g. json({"id": "..."}) — pull out the object.
+        wotd = session.get("https://dle.rae.es/data/wotd", params={"callback": "json"})
+        wotd.raise_for_status()
+        word_id = json.loads(re.search(r"({.*?})", wotd.text).group())["id"]
+
+        detail = session.get(f"https://dle.rae.es/data/fetch?id={word_id}")
+        detail.raise_for_status()
+        out.write_bytes(detail.content)
+
+    return out
+
+
+if __name__ == "__main__":
+    print(get_wotd())

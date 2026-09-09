@@ -1,0 +1,36 @@
+#!/bin/bash
+#
+# Screen backlight control via brightnessctl.
+#
+#   brightness up|u    +3%, but only while current level is <= max (no-op
+#                       once brightnessctl reports we're already at/above it)
+#   brightness down|d  -3%, or straight to raw level 100 once we're below the
+#                       raw-value floor of 1000 (avoids crawling to near-zero)
+#
+# Requires: brightnessctl (apt install brightnessctl)
+
+# +3%, guarded so it's a no-op once brightnessctl's current reading (g)
+# reaches its own reported max (m) — brightnessctl clamps anyway, this just
+# skips the ioctl.
+brightness-up () {
+    if [ "$(brightnessctl g)" -le "$(brightnessctl m)" ]; then
+        brightnessctl -q s 3%+
+    fi
+}
+
+# -3%, but once the raw value drops below 1000 jump straight to raw level
+# 100 instead of continuing to step down by percent (keeps low end usable).
+brightness-down () {
+    if [ "$(brightnessctl g)" -ge "1000" ]; then
+        brightnessctl -q s 3%-
+    else
+        brightnessctl -q s 100
+    fi
+}
+
+case $1 in
+    up) brightness-up exit;;
+    u) brightness-up; exit;;
+    down) brightness-down; exit;;
+    d) brightness-down; exit;;
+esac

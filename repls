@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+#
+# fzf menu to launch a REPL. Add/remove languages by editing REPLS below
+# (key = menu label, value = the command to exec).
+#
+#   repls
+
+declare -A REPLS=(
+    [python]="uvx ipython"
+    [js]="bun repl"
+    [lua]="lua -i"
+    [ruby]="irb"
+    [perl]="perl -d -e 1"
+    [php]="php -a"
+    [clojure]="bb"
+    [java]="jshell"
+    [elisp]="emacs -nw --eval (ielm)"
+    [go]="gore"
+    [rust]="evcxr"
+)
+
+choice=$(printf '%s\n' "${!REPLS[@]}" | sort | fzf --prompt='repl> ' --height=40% --layout=reverse)
+if [[ -z $choice ]]; then
+    echo "You did not choose any item"
+    exit 0
+fi
+
+exec ${REPLS[$choice]}

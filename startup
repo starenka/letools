@@ -1,0 +1,32 @@
+#!/bin/bash
+#
+# X session bootstrap: clears ~/.xsession-errors, remaps a key to Menu,
+# swaps caps-lock for ctrl, disables screensaver/DPMS, sets the key repeat
+# rate, then prompts (via cowsay) to ssh-add your keys and su - for a root
+# shell kept open in a terminal.
+#
+# Meant to be launched once per X session (e.g. `kitty --start-as
+# maximized startup` from an autostart list), not run standalone.
+
+echo '' > ~/.xsession-errors
+
+xmodmap -e "keycode 107 = Menu"
+# caps -> ctrl
+setxkbmap us -option caps:ctrl_modifier
+
+#turnoff screensaver & dpms
+xset -dpms s off
+xset s off
+xset s noblank
+#keyb repeat
+xset r rate 350 55
+
+# see grep autorun ~/.config/awesome/rc.lua -A10
+cowsay 'ssh passphrase:'
+# agent is run via user systemd unit
+ssh-add ~/.ssh/id_ed25519 ~/.ssh/id_rsa
+
+cowsay 'root passwd:'
+
+cd /tmp
+su -

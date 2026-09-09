@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+"""Schedule a desktop notification (via notify-send) to fire at a future time.
+
+TIME accepts one of:
+  +30m, +2h, +1d, +1w      relative offset (units: s/m/h/d/w)
+  "tomorrow HH:MM[:SS]"    next calendar day at that wall-clock time
+  2026-09-20T21:00[:00]    ISO 8601 datetime
+
+TIME is resolved to an absolute datetime and handed to a transient
+`systemd --user` timer (`systemd-run --on-calendar=...`), which fires
+notify-send at that instant. The scheduling lives in systemd, not in this
+process, so it survives the shell/terminal that launched it closing, and
+(unlike a plain sleeping process) also survives the machine suspending.
+"""
+
+import argparse
+import datetime as dt
+import re
+import subprocess
+import sys
+
+RELATIVE_RE = re.compile(r"^\+(\d+)([smhdw])$")
+UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+TOMORROW_RE = re.compile(r"^tomorrow\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$", re.IGNORECASE)
+
+
+def parse_time(value: str, now: dt.datetime) -> dt.datetime:
+    """Turn TIME into an absolute datetime, resolving relative forms against `now`."""
+    value = value.strip()
+
+    if m := RELATIVE_RE.match(value):
+        amount, unit = m.groups()
+        return now + dt.timedelta(seconds=int(amount) * UNIT_SECONDS[unit])
+
+    if m := TOMORROW_RE.match(value):
+        hour, minute, second = m.groups()
+        target_day = (now + dt.timedelta(days=1)).date()
+        return dt.datetime.combine(target_day, dt.time(int(hour), int(minute), int(second or 0)))
+
+    try:
+        return dt.datetime.fromisoformat(value)
+    except ValueError:
+        raise ValueError(
+            f'unrecognized time {value!r} (want +30m/+2d, "tomorrow HH:MM[:SS]", or ISO 8601)'
+        ) from None
+
+
+def schedule(target: dt.datetime, title: str, message: str) -> None:
+    """Register a one-shot systemd --user timer that fires notify-send at `target`."""
+    subprocess.run(
+        [
+            "systemd-run",
+            "--user",
+            f"--on-calendar={target:%Y-%m-%d %H:%M:%S}",
+            "--description=alarm",
+            "--",
+            "notify-send",
+            "--app-name=alarm",
+            title,
+            message,
+        ],
+        check=True,
+    )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Schedule a notify-send alarm for a future time")
+    parser.add_argument(
+        "time", help='+30m/+2d, "tomorrow HH:MM[:SS]", or ISO 8601 (2026-09-20T21:00[:00])'
+    )
+    parser.add_argument("message", help="notification body")
+    parser.add_argument("title", nargs="?", default="alarm", help='notification title (default: "alarm")')
+    args = parser.parse_args()
+
+    now = dt.datetime.now()
+    try:
+        target = parse_time(args.time, now)
+    except ValueError as e:
+        sys.exit(str(e))
+
+    delay = (target - now).total_seconds()
+    if delay <= 0:
+        sys.exit(f"{target:%Y-%m-%d %H:%M:%S} is in the past")
+
+    try:
+        schedule(target, args.title, args.message)
+    except subprocess.CalledProcessError as e:
+        sys.exit(f"systemd-run failed (exit {e.returncode})")
+
+    print(f"alarm set for {target:%Y-%m-%d %H:%M:%S} ({delay:.0f}s from now)")
+
+
+if __name__ == "__main__":
+    main()

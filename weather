@@ -14,7 +14,7 @@ Output schema (stable across providers):
   "stale_since": "14:17",  # only present when stale=true: when this data was fetched
   "current": {"temp_c": 21.4, "precip_prob_pct": 10 | null, "precip_mm": 0.0, "snow_mm": 0.0},
   "hourly": [
-    {"time": "14:00", "temp_c": 21.4, "precip_prob_pct": 10 | null, "precip_mm": 0.0, "snow_mm": 0.0},
+    {"time": "14–15", "temp_c": 21.4, "precip_prob_pct": 10 | null, "precip_mm": 0.0, "snow_mm": 0.0},
     ...
   ]
 }
@@ -64,6 +64,12 @@ USER_AGENT = "weather-widget/1.0 (personal awesomewm widget; single user)"
 HOURS_AHEAD = 12
 
 
+def hourly_interval_label(end: datetime) -> str:
+    """Return the one-hour interval ending at an hourly precipitation timestamp."""
+    start = end - timedelta(hours=1)
+    return f"{start:%H}–{end:%H}"
+
+
 def http_get_json(url: str, params: dict, headers: dict | None = None) -> dict:
     query = urllib.parse.urlencode(params)
     req = urllib.request.Request(
@@ -89,15 +95,16 @@ def fetch_open_meteo(lat: float, lon: float, tz: str, config: dict) -> dict:
     hourly_raw = data["hourly"]
     times = hourly_raw["time"]
     now = datetime.fromisoformat(cur["time"])
+    now_hour = now.replace(minute=0, second=0, microsecond=0)
     start = next(
-        (i for i, t in enumerate(times) if datetime.fromisoformat(t) >= now), 0
+        (i for i, t in enumerate(times) if datetime.fromisoformat(t) > now_hour), len(times)
     )
 
     # snowfall is reported in cm; scraped only (not surfaced by the widget) -
     # keep it in the same mm-ish scale as precip_mm for consistency.
     hourly = [
         {
-            "time": times[i][-5:],
+            "time": hourly_interval_label(datetime.fromisoformat(times[i])),
             "temp_c": hourly_raw["temperature_2m"][i],
             "precip_prob_pct": hourly_raw["precipitation_probability"][i],
             "precip_mm": hourly_raw["precipitation"][i],
@@ -135,7 +142,17 @@ def fetch_meteosource(lat: float, lon: float, tz: str, config: dict) -> dict:
         },
     )
     cur = data["current"]
-    hourly_raw = data["hourly"]["data"][:HOURS_AHEAD]
+    # Meteosource returns local, offset-free timestamps because we request a
+    # timezone, so compare it with an equally local, offset-free clock.
+    now_hour = datetime.now(ZoneInfo(tz)).replace(
+        minute=0, second=0, microsecond=0, tzinfo=None
+    )
+    # Meteosource precipitation at HH:00 is the preceding hour total. Omit the
+    # completed record and expose only intervals that still lie ahead.
+    hourly_raw = [
+        h for h in data["hourly"]["data"]
+        if datetime.fromisoformat(h["date"]) > now_hour
+    ][:HOURS_AHEAD]
 
     # Free tier has no precipitation-probability field at all (checked live
     # response + /api/v1/free/openapi.json schema); only paid tiers expose it.
@@ -143,7 +160,7 @@ def fetch_meteosource(lat: float, lon: float, tz: str, config: dict) -> dict:
     # precipitation total whenever its reported type is a snow variant.
     hourly = [
         {
-            "time": h["date"][-8:-3],
+            "time": hourly_interval_label(datetime.fromisoformat(h["date"])),
             "temp_c": h["temperature"],
             "precip_prob_pct": None,
             "precip_mm": h["precipitation"]["total"],
@@ -316,7 +333,7 @@ def fetch_aladin(lat: float, lon: float, tz: str, config: dict) -> dict:
         local_valid = temp_valid_by_step[s].astimezone(ZoneInfo(tz))
         hourly.append(
             {
-                "time": local_valid.strftime("%H:%M"),
+                "time": hourly_interval_label(local_valid + timedelta(hours=1)),
                 "temp_c": round(temp_by_step[s], 1),
                 "precip_prob_pct": None,
                 "precip_mm": round(hourly_mm.get(s + 1, 0.0), 2),

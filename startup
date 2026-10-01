@@ -11,8 +11,8 @@
 echo '' > ~/.xsession-errors
 
 xmodmap -e "keycode 107 = Menu"
-# caps -> ctrl
-setxkbmap us -option caps:ctrl_modifier
+# caps -> ctrl (full remap, not just an additional ctrl)
+setxkbmap us -option ctrl:nocaps
 
 #turnoff screensaver & dpms
 xset -dpms s off

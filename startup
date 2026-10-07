@@ -29,4 +29,6 @@ ssh-add ~/.ssh/id_ed25519 ~/.ssh/id_rsa
 cowsay 'root passwd:'
 
 cd /tmp
-su -
+until su -; do
+	cowsay 'bad password, try again:'
+done

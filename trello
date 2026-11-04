@@ -1,0 +1,163 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.14"
+# dependencies = ["httpx>=0.27"]
+# ///
+"""Fetch a Trello card (description, checklists, attachments, comments) as Markdown or JSON.
+
+Usage:
+    trello card https://trello.com/c/AbCdEfGh/12-some-title
+    trello card AbCdEfGh --json      # structured JSON for tools
+
+Auth: TRELLO_KEY / TRELLO_TOKEN env vars win; otherwise they're read from
+trello.toml next to this script (copy trello.toml.example, chmod 600). Get a
+key + token at https://trello.com/power-ups/admin (token: read-only scope is enough).
+"""
+import argparse
+import json
+import os
+import re
+import sys
+import tomllib
+from pathlib import Path
+
+import httpx
+
+API = "https://api.trello.com/1"
+CONFIG_PATH = Path(__file__).resolve().with_name("trello.toml")  # resolve ~/bin symlink
+
+
+def credentials() -> tuple[str, str]:
+    key, token = os.environ.get("TRELLO_KEY"), os.environ.get("TRELLO_TOKEN")
+    if not (key and token) and CONFIG_PATH.exists():
+        if CONFIG_PATH.stat().st_mode & 0o077:
+            print(f"warning: {CONFIG_PATH} is readable by others; chmod 600 it", file=sys.stderr)
+        with CONFIG_PATH.open("rb") as f:
+            cfg = tomllib.load(f)
+        key, token = key or cfg.get("key"), token or cfg.get("token")
+    if not (key and token):
+        sys.exit(f"No Trello credentials: set TRELLO_KEY/TRELLO_TOKEN or fill in {CONFIG_PATH}")
+    return key, token
+
+
+def card_id(ref: str) -> str:
+    m = re.search(r"/c/([A-Za-z0-9]+)", ref)
+    return m.group(1) if m else ref.strip()
+
+
+def fetch(ref: str, key: str, token: str) -> dict:
+    headers = {"Authorization": f'OAuth oauth_consumer_key="{key}", oauth_token="{token}"'}
+    cid = card_id(ref)
+    with httpx.Client(base_url=API, headers=headers, timeout=30) as c:
+        def get(path: str, **params):
+            r = c.get(path, params=params)
+            if r.status_code >= 400:
+                hint = ""
+                if r.status_code == 401:
+                    hint = (
+                        "\nTrello reports a token that doesn't belong to the key as 'invalid key'. "
+                        "Check that `token` was issued for this `key` (not the Power-Up secret): "
+                        "https://trello.com/power-ups/admin"
+                    )
+                sys.exit(f"Trello API error {r.status_code} on {path}: {r.text[:200]}{hint}")
+            return r.json()
+
+        card = get(
+            f"/cards/{cid}",
+            attachments="true",
+            checklists="all",
+            members="true",
+            board="true",
+            board_fields="name",
+            list="true",
+            stickers="false",
+        )
+        comments = get(
+            f"/cards/{cid}/actions",
+            filter="commentCard",
+            limit=1000,
+            memberCreator_fields="fullName,username",
+        )
+    card["comments"] = sorted(comments, key=lambda a: a["date"])
+    return card
+
+
+def normalize(raw: dict) -> dict:
+    """Stable, tool-friendly shape; the Markdown output is rendered from this too."""
+    return {
+        "id": raw["id"],
+        "short_link": raw["shortLink"],
+        "url": raw["url"],
+        "name": raw["name"],
+        "description": raw.get("desc", ""),
+        "board": (raw.get("board") or {}).get("name"),
+        "list": (raw.get("list") or {}).get("name"),
+        "labels": [l.get("name") or l["color"] for l in raw.get("labels", [])],
+        "members": [{"name": m["fullName"], "username": m["username"]} for m in raw.get("members", [])],
+        "due": raw.get("due"),
+        "due_complete": raw.get("dueComplete", False),
+        "closed": raw.get("closed", False),
+        "checklists": [
+            {
+                "name": cl["name"],
+                "items": [
+                    {"text": i["name"], "done": i["state"] == "complete"}
+                    for i in sorted(cl["checkItems"], key=lambda i: i["pos"])
+                ],
+            }
+            for cl in raw.get("checklists", [])
+        ],
+        "attachments": [{"name": a["name"], "url": a["url"]} for a in raw.get("attachments", [])],
+        "comments": [
+            {
+                "author": (a.get("memberCreator") or {}).get("fullName", "unknown"),
+                "username": (a.get("memberCreator") or {}).get("username"),
+                "date": a["date"],
+                "text": a["data"]["text"],
+            }
+            for a in raw["comments"]
+        ],
+    }
+
+
+def to_markdown(card: dict) -> str:
+    out = [f"# {card['name']}", ""]
+    meta = [
+        ("URL", card["url"]),
+        ("Board", card["board"]),
+        ("List", card["list"]),
+        ("Labels", ", ".join(card["labels"])),
+        ("Members", ", ".join(m["name"] for m in card["members"])),
+        ("Due", card["due"]),
+        ("Closed", "yes" if card["closed"] else None),
+    ]
+    out += [f"- **{k}:** {v}" for k, v in meta if v]
+    if card["description"]:
+        out += ["", "## Description", "", card["description"]]
+    for cl in card["checklists"]:
+        out += ["", f"## Checklist: {cl['name']}", ""]
+        out += [f"- [{'x' if i['done'] else ' '}] {i['text']}" for i in cl["items"]]
+    if card["attachments"]:
+        out += ["", "## Attachments", ""]
+        out += [f"- [{a['name']}]({a['url']})" for a in card["attachments"]]
+    if card["comments"]:
+        out += ["", "## Comments"]
+        for c in card["comments"]:
+            out += ["", f"### {c['author']} — {c['date']}", "", c["text"]]
+    return "\n".join(out) + "\n"
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="trello", description="Minimal Trello CLI")
+    sub = p.add_subparsers(dest="command", required=True)
+    cp = sub.add_parser("card", help=__doc__.splitlines()[0])
+    cp.add_argument("url", help="Card URL, short link or id")
+    cp.add_argument("--json", action="store_true", help="Structured JSON for tools (default: Markdown text)")
+    args = p.parse_args()
+
+    card = normalize(fetch(args.url, *credentials()))
+    print(json.dumps(card, indent=2, ensure_ascii=False) if args.json else to_markdown(card))
+
+
+if __name__ == "__main__":
+    main()

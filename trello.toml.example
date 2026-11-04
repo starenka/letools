@@ -1,0 +1,7 @@
+# Copy this file to trello.toml (untracked, chmod 600 - holds a live token).
+# TRELLO_KEY / TRELLO_TOKEN env vars override these if set.
+#
+# key:   https://trello.com/power-ups/admin -> your Power-Up -> API key
+# token: on that same page, "generate a Token" (authorize with read scope)
+key = ""
+token = ""

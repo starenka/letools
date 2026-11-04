@@ -52,8 +52,14 @@ get-builtin-dev () {
     xrandr | grep -E '(^eDP).* connected' | cut -d' ' -f1
 }
 
+# Disconnected outputs that still hold a mode/CRTC (ghosts after undocking
+# with the external monitor still on).
+get-stale-devs () {
+    xrandr | awk '/^(DP|HDMI)/ && / disconnected [0-9]+x[0-9]+\+/ {print $1}'
+}
+
 builtin-on () {
-    xrandr --output "$(get-builtin-dev)" --mode $BUILTIN_RES
+    xrandr --output "$(get-builtin-dev)" --mode "$BUILTIN_RES" --pos 0x0 --primary --fb "$BUILTIN_RES"
 }
 
 builtin-off () {
@@ -61,11 +67,19 @@ builtin-off () {
 }
 
 external-on () {
-    xrandr --output "$(get-ext-dev)" --"$EXTERNAL_RES"
+    if [[ "$EXTERNAL_RES" == auto ]]; then
+        xrandr --output "$(get-ext-dev)" --auto
+    else
+        xrandr --output "$(get-ext-dev)" --mode "$EXTERNAL_RES"
+    fi
 }
 
+# Turn off the connected external output and any stale ghost outputs.
 external-off () {
-    xrandr --output "$(get-ext-dev)" --off
+    local d
+    for d in $(get-ext-dev) $(get-stale-devs); do
+        xrandr --output "$d" --off
+    done
 }
 
 # Dock mode: external monitor on, builtin off — only if an external output
@@ -76,13 +90,16 @@ external-on-builtin-off () {
 
 # Undock mode: builtin on, external off, then restart awesome.
 external-off-bulitin-on () {
-    builtin-on && external-off && reload-awesome
+    # external first so ghost outputs release their CRTC; don't chain with &&
+    external-off
+    builtin-on
+    reload-awesome
 }
 
 case $1 in
     external) external-on; exit;;
     e) external-on; exit;;
-    don) external-on-builtin-off exit;;
+    don) external-on-builtin-off; exit;;
     doff) external-off-bulitin-on exit;;
     integrated) builtin-on; exit;;
     i) builtin-on; exit;;

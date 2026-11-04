@@ -1,4 +1,4 @@
-tools := "alarm brightness monitor player rae_wotd repls startup volume weather"
+tools := "alarm brightness monitor player rae_wotd repls startup trello volume weather"
 bin_dir := env_var('HOME') / "bin"
 
 default:

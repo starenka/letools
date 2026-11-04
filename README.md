@@ -156,3 +156,23 @@ to get started — see that file for the full schema, including where to get
 free API keys for Mapy.com geocoding and Meteosource). `weather.toml` and
 `.weather-cache/` are gitignored since they hold live API keys and
 location/forecast state.
+
+### trello
+
+Fetches a single Trello card — description, labels, members, checklists,
+attachments and all comments — as Markdown text (default, for reading or
+pasting into an AI assistant) or structured JSON (`--json`, stable keys:
+`name`, `description`, `board`, `list`, `labels`, `members`, `checklists`,
+`attachments`, `comments`, ...) for tools.
+
+A `uv`-run script (see the shebang) — `httpx` is declared inline.
+
+```
+trello card https://trello.com/c/AbCdEfGh/12-title   # Markdown to stdout
+trello card AbCdEfGh --json                      # short link/id, structured JSON for tools
+```
+
+Credentials come from `TRELLO_KEY` / `TRELLO_TOKEN` env vars if set, otherwise
+from `trello.toml` next to the script (copy `trello.toml.example`, `chmod 600`;
+it warns if the file is group/world-readable). `trello.toml` is gitignored.
+Get a key and read-only token at <https://trello.com/power-ups/admin>.

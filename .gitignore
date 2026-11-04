@@ -4,3 +4,6 @@ __pycache__/
 # weather: holds API keys + last-fetched location/GRIB data
 /weather.toml
 /.weather-cache/
+
+# trello: holds API key + token
+/trello.toml

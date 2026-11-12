@@ -8,6 +8,7 @@
 Usage:
     trello card https://trello.com/c/AbCdEfGh/12-some-title
     trello card AbCdEfGh --json      # structured JSON for tools
+    trello download AbCdEfGh [-o DIR]  # save uploaded attachments, print their paths
 
 Auth: TRELLO_KEY / TRELLO_TOKEN env vars win; otherwise they're read from
 trello.toml next to this script (copy trello.toml.example, chmod 600). Get a
@@ -20,6 +21,7 @@ import re
 import sys
 import tomllib
 from pathlib import Path
+from urllib.parse import quote
 
 import httpx
 
@@ -45,10 +47,13 @@ def card_id(ref: str) -> str:
     return m.group(1) if m else ref.strip()
 
 
+def auth_headers(key: str, token: str) -> dict:
+    return {"Authorization": f'OAuth oauth_consumer_key="{key}", oauth_token="{token}"'}
+
+
 def fetch(ref: str, key: str, token: str) -> dict:
-    headers = {"Authorization": f'OAuth oauth_consumer_key="{key}", oauth_token="{token}"'}
     cid = card_id(ref)
-    with httpx.Client(base_url=API, headers=headers, timeout=30) as c:
+    with httpx.Client(base_url=API, headers=auth_headers(key, token), timeout=30) as c:
         def get(path: str, **params):
             r = c.get(path, params=params)
             if r.status_code >= 400:
@@ -107,7 +112,18 @@ def normalize(raw: dict) -> dict:
             }
             for cl in raw.get("checklists", [])
         ],
-        "attachments": [{"name": a["name"], "url": a["url"]} for a in raw.get("attachments", [])],
+        "attachments": [
+            {
+                "id": a["id"],
+                "name": a["name"],
+                "url": a["url"],
+                "is_upload": a.get("isUpload", False),
+                "file_name": a.get("fileName"),
+                "mime_type": a.get("mimeType"),
+                "bytes": a.get("bytes"),
+            }
+            for a in raw.get("attachments", [])
+        ],
         "comments": [
             {
                 "author": (a.get("memberCreator") or {}).get("fullName", "unknown"),
@@ -147,16 +163,53 @@ def to_markdown(card: dict) -> str:
     return "\n".join(out) + "\n"
 
 
+def download(card: dict, dest: Path, key: str, token: str) -> list[Path]:
+    """Save the card's uploaded attachments into dest; external links are skipped."""
+    uploads = [a for a in card["attachments"] if a["is_upload"]]
+    skipped = len(card["attachments"]) - len(uploads)
+    if skipped:
+        print(f"skipping {skipped} link attachment(s) (not uploaded files)", file=sys.stderr)
+    dest.mkdir(parents=True, exist_ok=True)
+    saved = []
+    with httpx.Client(headers=auth_headers(key, token), timeout=120, follow_redirects=True) as c:
+        for a in uploads:
+            # Never trust the remote name as a path; keep only its final component.
+            name = Path(a["file_name"] or a["name"]).name or a["id"]
+            target = dest / name
+            n = 1
+            while target.exists():
+                target = dest / f"{Path(name).stem}-{n}{Path(name).suffix}"
+                n += 1
+            url = f"{API}/cards/{card['id']}/attachments/{a['id']}/download/{quote(name)}"
+            with c.stream("GET", url) as r:
+                if r.status_code >= 400:
+                    r.read()
+                    sys.exit(f"Trello download error {r.status_code} for {name}: {r.text[:200]}")
+                with target.open("wb") as f:
+                    for chunk in r.iter_bytes():
+                        f.write(chunk)
+            saved.append(target)
+    return saved
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="trello", description="Minimal Trello CLI")
     sub = p.add_subparsers(dest="command", required=True)
     cp = sub.add_parser("card", help=__doc__.splitlines()[0])
     cp.add_argument("url", help="Card URL, short link or id")
     cp.add_argument("--json", action="store_true", help="Structured JSON for tools (default: Markdown text)")
+    dp = sub.add_parser("download", help="Download a card's uploaded attachments")
+    dp.add_argument("url", help="Card URL, short link or id")
+    dp.add_argument("-o", "--output", type=Path, help="Target directory (default: ./trello-<shortlink>)")
     args = p.parse_args()
 
-    card = normalize(fetch(args.url, *credentials()))
-    print(json.dumps(card, indent=2, ensure_ascii=False) if args.json else to_markdown(card))
+    creds = credentials()
+    card = normalize(fetch(args.url, *creds))
+    if args.command == "download":
+        for path in download(card, args.output or Path(f"trello-{card['short_link']}"), *creds):
+            print(path)
+    else:
+        print(json.dumps(card, indent=2, ensure_ascii=False) if args.json else to_markdown(card))
 
 
 if __name__ == "__main__":

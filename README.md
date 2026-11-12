@@ -170,7 +170,12 @@ A `uv`-run script (see the shebang) — `httpx` is declared inline.
 ```
 trello card https://trello.com/c/AbCdEfGh/12-title   # Markdown to stdout
 trello card AbCdEfGh --json                      # short link/id, structured JSON for tools
+trello download AbCdEfGh -o /tmp/card-files      # save uploaded attachments, print paths
 ```
+
+`download` saves only uploaded files (not link attachments) into `-o DIR`
+(default `./trello-<shortlink>`), never overwrites existing files, and prints one
+saved path per line so an agent can open them.
 
 Credentials come from `TRELLO_KEY` / `TRELLO_TOKEN` env vars if set, otherwise
 from `trello.toml` next to the script (copy `trello.toml.example`, `chmod 600`;

@@ -22,9 +22,11 @@ xset s noblank
 xset r rate 350 55
 
 # see grep autorun ~/.config/awesome/rc.lua -A10
-cowsay 'ssh passphrase:'
-# agent is run via user systemd unit
-ssh-add ~/.ssh/id_ed25519 ~/.ssh/id_rsa
+# agent is run via user systemd unit; ssh-add prompts for passphrases, so do it
+# in its own window (only if keys aren't loaded yet) instead of blocking here
+if ! ssh-add -l >/dev/null 2>&1; then
+	setsid -f kitty sh -c "cowsay 'ssh passphrase:'; ssh-add ~/.ssh/id_ed25519 ~/.ssh/id_rsa" >/dev/null 2>&1
+fi
 
 cowsay 'root passwd:'
 
